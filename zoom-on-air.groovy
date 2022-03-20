@@ -152,27 +152,6 @@ mappings {
     }
 }
 
-def receiveWebhook() {
-    def json
-    try {
-        json = parseJson(request.body)
-    }
-    catch (e) {
-        log.error "JSON received from app is invalid! ${request.body}"
-        return renderError(400, messages.invalidInput)
-    }
-    
-    if(json.event == "user.presence_status_updated") {
-        receievePresenceEvent(json.payload)
-    }
-    
-    data = [
-        received: true
-    ]
-    
-    render contentType: "application/json", data: data, status: 200 
-}
-
 def appInstallRedirect() {
     if (params.code) {
         state.zoomInstalled = true
@@ -192,10 +171,44 @@ def appInstallRedirect() {
     render contentType: "text/html", data: html, status: 200 
 }
 
+def receiveWebhook() {
+    def json
+    try {
+        json = parseJson(request.body)
+    }
+    catch (e) {
+        log.error "JSON received from app is invalid! ${request.body}"
+        return renderError(400, messages.invalidInput)
+    }
+    
+    if(request.headers.authorization != verificationToken) {
+        log.error "verification token did not match"
+        data = [
+            error: "invalid verification token"
+        ]
+        render contentType: "application/json", data: data, status: 401
+        return
+    }
+    
+    if(json.event == "user.presence_status_updated") {
+        receievePresenceEvent(json.payload)
+    }
+    
+    data = [
+        received: true
+    ]
+    
+    render contentType: "application/json", data: data, status: 200 
+}
+
 def receievePresenceEvent(payload) {
+    if(payload.object.email != email) {
+        log.error "email of presence detected did not match provided email"
+        return
+    }
+    
     if(payload.object.presence_status == "In_Meeting") {
         state.onAir = true
-        state.lastState = 
         devices.on()
         setAttributes()
     } else if(state.onAir) {
