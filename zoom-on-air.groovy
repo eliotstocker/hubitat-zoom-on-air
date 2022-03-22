@@ -171,6 +171,24 @@ def appInstallRedirect() {
     render contentType: "text/html", data: html, status: 200 
 }
 
+def getAuthHeader(request) {
+    if(request.headers) {
+        def val = null
+        if(request.headers.authorization) {
+            val = request.headers.authorization
+        }
+        if(request.headers.Authorization) {
+            val = request.headers.Authorization
+        }
+        
+        if(val instanceof List) {
+            val = val[0]
+        }
+        return val
+    }
+    return null
+}
+
 def receiveWebhook() {
     def json
     try {
@@ -181,7 +199,8 @@ def receiveWebhook() {
         return renderError(400, messages.invalidInput)
     }
     
-    if(request.headers.authorization != verificationToken) {
+    def auth = getAuthHeader(request)    
+    if(auth != verificationToken) {        
         log.error "verification token did not match"
         data = [
             error: "invalid verification token"
