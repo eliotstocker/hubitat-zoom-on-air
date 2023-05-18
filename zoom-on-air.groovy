@@ -68,7 +68,7 @@ def prefAPISettings() {
         section("Settings"){
             input "clientId", "string", title: "App Client ID", multiple: false
             input "clientSecret", "string", title: "App Client Secret", multiple: false
-            input "verificationToken", "string", title: "Verification Token", multiple: false
+            input "secretToken", "string", title: "Secret Token", multiple: false
             input "email", "string", title: "Account Email Address", multiple: false
         }
     }
@@ -95,7 +95,7 @@ def instructions() {
         "<br />" +
         "In the popup navigate to the <b>User Activity</b> pane and tick: <b>User's presence status has been updated</b><br />" +
         "Click <b>Done</b>" +
-        "Copy the <b>Verification Token</b> to the corresponding box bellow</span><br />" +
+        "Copy the <b>Secret Token</b> to the corresponding box bellow</span><br />" +
         "<br />" +
         "You will also need to fill in various required fields in the <b>Information</b> pane, these will not effect the funtion of the application and can be filled with anything you wish..."
 }
@@ -104,13 +104,13 @@ def installAppButton() {
     def encodedRedirect = java.net.URLEncoder.encode(getRedirectEndpoint(), "UTF-8")
     def url = "https://zoom.us/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodedRedirect}"
     
-    if(clientId == null || clientId == "" || clientSecret == null || clientSecret == "" || verificationToken == null || verificationToken == "" || email == null || email == "") {
+    if(clientId == null || clientId == "" || clientSecret == null || clientSecret == "" || email == null || email == "") {
         return "Please Setup all Zoom API parameters using the button bellow, you will then be able to install the Zoom Application"
     }
     
     def opacity = state.zoomInstalled ? "0.75" : "1"
     
-    def button = "<a href=\"${url}\"><div style=\"background: #eeeeee; opacity: ${opacity}; border-radius: 17px 3px 3px 17px; margin: 0 -8px; box-shadow: rgba(0, 0, 0, 0.14) 0px 2px 2px 0px, rgba(0, 0, 0, 0.2) 0px 3px 1px -2px, rgba(0, 0, 0, 0.12) 0px 1px 5px 0px;\"><img style=\"padding-right: 12px;\" src=\"https://cdn.bfldr.com/AMC8F81D/at/g56v35v3spmwk5gvb97wsb/Zoom_-_Camera.png?auto=webp&format=png&width=50&height=50\"/><span style=\"color: #111111\">Install Zoom App</span></div></a>"
+    def button = "<a href=\"${url}\"><div style=\"background: #eeeeee; opacity: ${opacity}; border-radius: 17px 3px 3px 17px; margin: 0 -8px; box-shadow: rgba(0, 0, 0, 0.14) 0px 2px 2px 0px, rgba(0, 0, 0, 0.2) 0px 3px 1px -2px, rgba(0, 0, 0, 0.12) 0px 1px 5px 0px;\"><img style=\"padding-right: 12px;width: 60px;\" src=\"https://explore.zoom.us/media/desktop-logo-zoombrand.png\"><span style=\"color: #111111\">Install Zoom App</span></div></a>"
     
     if(state.zoomInstalled) {
         return "<div style=\"font-size: 0.75em\">Zoom App Installed, you may reinstall if required with the button bellow:</div><br />" + button
@@ -142,7 +142,8 @@ def installed() {
 mappings {
     path("/receive") {
         action: [
-            POST: "receiveWebhook"
+            POST: "receiveWebhook",
+            GET: "validateWebhook"
         ]
     }
     path("/redirect") {
@@ -171,42 +172,50 @@ def appInstallRedirect() {
     render contentType: "text/html", data: html, status: 200 
 }
 
-def getAuthHeader(request) {
-    if(request.headers) {
-        def val = null
-        if(request.headers.authorization) {
-            val = request.headers.authorization
-        }
-        if(request.headers.Authorization) {
-            val = request.headers.Authorization
-        }
+def validateRequestSignature(request) {
+    log.debug request.headers
+    if(request.headers && request.headers['X-zm-request-timestamp'] && request.headers['X-zm-signature']) {
+        def message = "v0:${request.headers['X-zm-request-timestamp'][0]}:${request.body}"
         
-        if(val instanceof List) {
-            val = val[0]
+        def hash = hashValue(message);
+        
+        log.debug "actual: ${request.headers['X-zm-signature']}; computed: v0=${hash}"
+        
+        if(request.headers['X-zm-signature'][0] == "v0=${hash}") {
+            return true
         }
-        return val
+    } else {
+        log.error "missing validation headers"
     }
-    return null
+    return false
 }
 
 def receiveWebhook() {
+    log.debug("webhook reception ocurred: ${request.body}")
+    def valid = validateRequestSignature(request)
+    
+    if(!valid) {
+        log.error "signature did not mtach expected value"
+        return renderError(401, "invalid or missing request signature");
+    }
+    
     def json
     try {
         json = parseJson(request.body)
     }
     catch (e) {
         log.error "JSON received from app is invalid! ${request.body}"
-        return renderError(400, messages.invalidInput)
+        return renderError(400, "JSON received from app is invalid! ${request.body}")
     }
     
-    def auth = getAuthHeader(request)    
-    if(auth != verificationToken) {        
-        log.error "verification token did not match"
-        data = [
-            error: "invalid verification token"
+    if(json.event == "endpoint.url_validation") {
+        def hash = hashValue(json.payload.plainToken);
+        def payload = [
+            plainToken: json.payload.plainToken,
+            encryptedToken: hash
         ]
-        render contentType: "application/json", data: data, status: 401
-        return
+        
+        return renderResponse(payload)
     }
     
     if(json.event == "user.presence_status_updated") {
@@ -217,7 +226,19 @@ def receiveWebhook() {
         received: true
     ]
     
-    render contentType: "application/json", data: data, status: 200 
+    return renderResponse(data)
+}
+
+def hashValue(payload) {
+    def mac = javax.crypto.Mac.getInstance("HmacSHA256")
+    mac.init(new javax.crypto.spec.SecretKeySpec(secretToken.getBytes("UTF-8"), "HmacSHA256"));
+    
+    return mac.doFinal(payload.getBytes("UTF-8")).encodeHex().toString();
+}
+
+def validateWebhook() {
+    log.debug("webhook validation ocurred")
+    return renderResponse([valid: true])
 }
 
 def receievePresenceEvent(payload) {
@@ -226,14 +247,23 @@ def receievePresenceEvent(payload) {
         return
     }
     
-    if(payload.object.presence_status == "In_Meeting") {
+    if(payload.object.presence_status == "In_Meeting" || payload.object.presence_status == "Presenting") {
         state.onAir = true
         devices.on()
         setAttributes()
     } else if(state.onAir) {
+        log.debug payload.object.presence_status
         state.onAir = false
         devices.off()
     }
+}
+
+def renderResponse(data) {
+    render contentType: "application/json", data: new groovy.json.JsonOutput().toJson(data), status: 200
+}
+
+def renderError(status, message) {
+    render contentType: "application/json", data: new groovy.json.JsonOutput().toJson([error: true, message: message]), status: status
 }
 
 def setAttributes() {
