@@ -104,7 +104,7 @@ def installAppButton() {
     def encodedRedirect = java.net.URLEncoder.encode(getRedirectEndpoint(), "UTF-8")
     def url = "https://zoom.us/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodedRedirect}"
     
-    if(clientId == null || clientId == "" || clientSecret == null || clientSecret == "" || email == null || email == "") {
+    if(clientId == null || clientId == "" || clientSecret == null || clientSecret == "" || secretToken == null || secretToken == "" || email == null || email == "") {
         return "Please Setup all Zoom API parameters using the button bellow, you will then be able to install the Zoom Application"
     }
     
